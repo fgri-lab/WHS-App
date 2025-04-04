@@ -1,0 +1,189 @@
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>WHS Handicap App</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: sans-serif;
+      background-image: url('https://images.unsplash.com/photo-1603497982812-963c6c25b70b?auto=format&fit=crop&w=1600&q=80');
+      background-size: cover;
+      background-attachment: fixed;
+      background-position: center;
+      margin: 0;
+      padding: 2em;
+    }
+    .container {
+      background-color: rgba(255, 255, 255, 0.95);
+      padding: 2em;
+      border-radius: 12px;
+      max-width: 800px;
+      margin: auto;
+    }
+    input, button, select {
+      margin: 5px 0;
+      padding: 8px;
+      width: 100%;
+      max-width: 300px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1em;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 6px 10px;
+      text-align: center;
+    }
+    .used {
+      background-color: #d4edda;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>WHS Handicap App</h1>
+    <form onsubmit="addScore(); return false;">
+      <label>Datum: <input type="date" id="date" required></label><br>
+      <label>Löcher:
+        <select id="holes">
+          <option value="18">18</option>
+          <option value="9">9</option>
+        </select>
+      </label><br>
+      <label>Bruttoschläge: <input type="number" id="strokes" required></label><br>
+      <label>Course Rating: <input type="number" step="0.1" id="cr" required></label><br>
+      <label>Slope Rating: <input type="number" id="slope" required></label><br>
+      <label id="hcpiLabel" style="display:none;">HCPI bei 9 Loch: <input type="number" step="0.1" id="hcpi"></label><br>
+      <button type="submit">Hinzufügen</button>
+    </form>
+
+    <h2>Score Differentials</h2>
+    <p><strong>Aktueller HCPI: <span id="hcpiDisplay">-</span></strong></p>
+    <table>
+      <thead><tr><th>Datum</th><th>SD</th><th>Aktion</th></tr></thead>
+      <tbody id="scoreTable"></tbody>
+    </table>
+
+    <h2>HCPI-Verlauf</h2>
+    <table>
+      <thead><tr><th>Datum</th><th>HCPI</th></tr></thead>
+      <tbody id="hcpiHistoryTable"></tbody>
+    </table>
+  </div>
+
+  <script>
+    const scores = JSON.parse(localStorage.getItem("whs_scores") || "[]");
+
+    document.getElementById("holes").addEventListener("change", e => {
+      document.getElementById("hcpiLabel").style.display = e.target.value === "9" ? "block" : "none";
+    });
+
+    function save() {
+      localStorage.setItem("whs_scores", JSON.stringify(scores));
+    }
+
+    function addScore() {
+      const date = document.getElementById("date").value;
+      const holes = document.getElementById("holes").value;
+      const strokes = parseFloat(document.getElementById("strokes").value);
+      const cr = parseFloat(document.getElementById("cr").value);
+      const slope = parseFloat(document.getElementById("slope").value);
+      let sd = (strokes - cr) * (113 / slope);
+      if (holes === "9") {
+        const hcpi = parseFloat(document.getElementById("hcpi").value);
+        if (isNaN(hcpi)) {
+          alert("Bitte HCPI für 9 Loch angeben.");
+          return;
+        }
+        sd += ((hcpi * 1.04) + 2.4) / 2;
+      }
+      sd = Math.round(sd * 10) / 10;
+      scores.push({ date, sd });
+      update();
+    }
+
+    function deleteScore(index) {
+      if (confirm("Eintrag löschen?")) {
+        scores.splice(index, 1);
+        update();
+      }
+    }
+
+    function calculateHCPI() {
+      const sorted = scores.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+      const last20 = sorted.slice(0, 20);
+      const best = last20.slice().sort((a, b) => a.sd - b.sd);
+      const n = best.length;
+      let use = 1;
+      if (n >= 20) use = 8;
+      else if (n === 19) use = 7;
+      else if (n >= 17) use = 6;
+      else if (n >= 15) use = 5;
+      else if (n >= 12) use = 4;
+      else if (n >= 9)  use = 3;
+      else if (n >= 7)  use = 2;
+      let avg = best.slice(0, use).reduce((sum, s) => sum + s.sd, 0) / use;
+      if (n <= 2) avg -= 2;
+      else if (n <= 4) avg -= 1;
+      return { value: Math.max(0, Math.round(avg * 10) / 10), used: best.slice(0, use) };
+    }
+
+    function update() {
+      scores.sort((a, b) => new Date(b.date) - new Date(a.date));
+      const table = document.getElementById("scoreTable");
+      table.innerHTML = "";
+      const hcpiCalc = calculateHCPI();
+      scores.forEach((s, i) => {
+        const row = document.createElement("tr");
+        if (hcpiCalc.used.includes(s)) row.classList.add("used");
+        row.innerHTML = `<td>${s.date}</td><td>${s.sd.toFixed(1)}</td>
+          <td><button onclick="deleteScore(${i})">Löschen</button></td>`;
+        table.appendChild(row);
+      });
+      document.getElementById("hcpiDisplay").textContent = hcpiCalc.value.toFixed(1);
+
+      const histTable = document.getElementById("hcpiHistoryTable");
+      histTable.innerHTML = "";
+      const history = [];
+      const entries = [...scores].sort((a, b) => new Date(a.date) - new Date(b.date));
+      let partials = [];
+      entries.forEach(entry => {
+        partials.push(entry);
+        const h = calculateHCPIFromList(partials);
+        history.push({ date: entry.date, hcpi: h });
+      });
+      history.forEach(h => {
+        const row = document.createElement("tr");
+        row.innerHTML = `<td>${h.date}</td><td>${h.hcpi.toFixed(1)}</td>`;
+        histTable.appendChild(row);
+      });
+
+      save();
+    }
+
+    function calculateHCPIFromList(list) {
+      const sorted = list.slice().sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 20);
+      const best = sorted.slice().sort((a, b) => a.sd - b.sd);
+      const n = best.length;
+      let use = 1;
+      if (n >= 20) use = 8;
+      else if (n === 19) use = 7;
+      else if (n >= 17) use = 6;
+      else if (n >= 15) use = 5;
+      else if (n >= 12) use = 4;
+      else if (n >= 9)  use = 3;
+      else if (n >= 7)  use = 2;
+      let avg = best.slice(0, use).reduce((sum, s) => sum + s.sd, 0) / use;
+      if (n <= 2) avg -= 2;
+      else if (n <= 4) avg -= 1;
+      return Math.max(0, Math.round(avg * 10) / 10);
+    }
+
+    update();
+  </script>
+</body>
+</html>
